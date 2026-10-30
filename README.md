@@ -56,12 +56,16 @@ Everything must pass. If anything fails, stop and send the output to Pranav befo
 python -m sandbox.scenarios --worlds 60 --seed 0          # data/sandbox_pairs.jsonl, 1,620 rows; reproduces the committed file
 ```
 
-ScienceWorld: first the smoke test, then the full run. Exact flags and expected times are in [docs/sciworld_spec.md](docs/sciworld_spec.md).
+ScienceWorld, in this order. What to check in each output is listed in [docs/sciworld_spec.md](docs/sciworld_spec.md) under "Smoke test".
 
 ```bash
-python -m sciworld.generate --limit 20 --out data/sciworld_smoke.jsonl   # check it runs and the labels look sensible
-python -m sciworld.generate --out data/sciworld_pairs.jsonl              # about 800 rows
+python -m sciworld.env --task boil --variation 0      # must say scienceworld 1.3.0 and "deterministic replay: True"; if False, stop
+python -m sciworld.generate --tasks boil,find-living-thing --variations 1 --states 3 --per-state 4 \
+    --limit 20 --workers 1 --target 0 --out data/sciworld_smoke.jsonl   # then read 5 rows: does restore_sequence undo the action?
+python -m sciworld.generate --variations 5 --states 8 --per-state 4 --workers 16 --target 800
 ```
+
+The full run writes `data/sciworld_pairs.jsonl` (800 rows, balanced) and `data/sciworld_pairs_raw.jsonl` (every row). It is estimated at about 35 minutes with 16 workers; each worker runs its own Java process and needs about 1 GB of memory, so set `--workers` to fit the machine. If it stops, rerun with `--resume`. If fast stepping fails, add `--slow-step`.
 
 Then the splits, which every later step uses:
 
@@ -143,6 +147,7 @@ One JSON object per line. The 7 fields required by the brief come first:
 | `label_h1`, `label_h2`, `label_h3` | Labels at each horizon |
 | `restore_sequence` | Shortest undo the labeller found |
 | `action`, `state` / `replay` | Enough to re-run the row: the sandbox state, or the ScienceWorld task, variation and action prefix |
+| `search` | ScienceWorld only: search depth, nodes, whether it hit the node cap, seconds |
 
 ## Safety
 

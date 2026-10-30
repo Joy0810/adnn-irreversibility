@@ -11,4 +11,5 @@ matplotlib
 torch
 transformers
 accelerate
-scienceworld
+# 1.3.0 makes replay deterministic; it is on GitHub only (PyPI has 1.2.3). See docs/sciworld_spec.md.
+scienceworld @ git+https://github.com/allenai/ScienceWorld@e8216d6
