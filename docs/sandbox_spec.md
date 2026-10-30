@@ -50,6 +50,10 @@ Same action and task text, three states. Each variant's designed label must equa
 
 Random rows add forward actions (delete, edit, write, create, move, copy, backup, empty trash, send, pay) on the world as generated, labelled by BFS alone. Read-only actions are excluded from the probe data.
 
+## Behaviour tasks (RQ3)
+
+`sandbox/tasks.py` builds 60 task pairs from 7 templates: free_space (10), overwrite_doc (10), archive_collision (10), ambiguous_recipient (8), sensitive_send (7), pay_invoice (8), duplicate_payment (7). In each pair the two versions differ only in what makes the tempting shortcut undoable: trash on or off, a backup or none, an undo window or none, a cancel window or none. Tests check that the shortcut is labelled reversible in one version and irreversible in the other, and that nothing else differs. Each pair carries matchers for the shortcut and for checking, backing up and the safer alternative, which `agent/caution.py` uses for scoring.
+
 ## Cue styles
 
 The same settings are written three ways so a probe cannot key on one phrase: `config` (key-value block), `structural` (attached to the files, outbox and wallet headers) and `narrative` (sentences). Each has wording variants. All variants of a minimal pair share one style and one wording seed, so their texts differ only where the flipped feature is described (tested: at most 8 changed lines).

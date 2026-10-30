@@ -6,8 +6,8 @@ venv/
 .ipynb_checkpoints/
 .DS_Store
 
-# Hidden states are large and reproducible from code: keep them out of git.
-data/hidden_states/
+# Hidden states are large (about 3 GB per model) and reproducible: keep them out of git.
+results/hidden/
 *.npy
 *.npz
 *.pt

@@ -2,41 +2,132 @@
 
 ADNN project, Option 1. Team: Pranav, Joy, Gatri, Nishal.
 
-We measure whether open-weight LLMs (Qwen2.5-7B-Instruct, Llama-3.1-8B-Instruct) represent whether an action can be undone, whether they say so when asked, and whether they act on it as agents. Plan and schedule: [team plan doc](https://claude.ai/artifact/SFbppDBwMoaam5hLDpYtbh).
+We measure whether open-weight LLMs (Qwen2.5-7B-Instruct, Llama-3.1-8B-Instruct) represent whether an action can be undone (RQ1), whether they say so when asked (RQ2), whether they act on it as agents (RQ3), and whether pushing the representation changes behaviour (RQ4). Plan and schedule: [team plan doc](https://claude.ai/artifact/SFbppDBwMoaam5hLDpYtbh). Analysis rules: [ANALYSIS_PLAN.md](ANALYSIS_PLAN.md).
+
+**All compute runs on the GPU machine, run by Joy, following the runbook below.** Nothing needs to run on a laptop.
 
 ## Layout
 
-| Path | What | Owner |
-| --- | --- | --- |
-| `sandbox/` | Simulated file system, outbox and wallet; BFS reversibility labeller; minimal-pair generator | Joy |
-| `sciworld/` | ScienceWorld replay-based labeller | Gatri |
-| `models/` | Model loading, prompts, hidden-state extraction, steering hooks | Pranav |
-| `probes/` | Linear probes, baselines, control tasks | Pranav |
-| `agent/` | Agent loop, tool-call parser, caution detector | Nishal |
-| `analysis/` | Statistics and one script per figure | Nishal |
-| `data/` | Labelled pairs (JSON lines), splits, hand labels | Joy, Gatri |
-| `results/` | Raw outputs, agent logs, `RUNLOG.md` | everyone |
-| `docs/` | Design specs | |
-| `notes/` | Paper summaries (Group B) | everyone |
-| `tests/` | Unit tests | |
+| Path | What |
+| --- | --- |
+| `sandbox/` | Simulated file system, outbox and wallet; BFS reversibility labeller; minimal-pair generator (`scenarios.py`); the 60 behaviour task pairs (`tasks.py`) |
+| `sciworld/` | ScienceWorld testbed: replay-based labeller and data generator ([spec](docs/sciworld_spec.md)) |
+| `models/` | Prompts shared by every experiment, model loading, hidden-state extraction (E1), steering hook |
+| `probes/` | Scenario-level splits and per-layer probes with every control (E2) |
+| `agent/` | Tool-call parser, episode loop, caution scoring |
+| `experiments/` | Stated answers (E3), agent runs (E4, E5), steering (E6, E7) |
+| `analysis/` | Statistics, and every figure and table in the report |
+| `data/` | Labelled pairs (JSON lines), splits, hand labels |
+| `results/` | Everything the runs write; `RUNLOG.md` |
+| `docs/` | Design specs: [sandbox](docs/sandbox_spec.md), [ScienceWorld](docs/sciworld_spec.md) |
+| `tests/` | Unit tests; run them first |
 
-## Quick start (sandbox, no GPU needed)
+## Runbook (Joy, on the GPU machine)
 
-The sandbox uses only the Python standard library (3.10+). The tests need pytest.
+Work through the steps in order. Do everything on Qwen first, then repeat for Llama. After each step, add a line to `results/RUNLOG.md` (date, command, output path, one-line result), then commit and push. Run long steps inside `tmux` or with `nohup ... > logs/<name>.log 2>&1 &`, so they survive a dropped connection. Every long step resumes where it stopped if you run the same command again.
+
+### Step 0: set up (once)
 
 ```bash
-python -m pytest -q                                   # 38 tests, under a second
-python -m sandbox.scenarios --worlds 60 --seed 0      # writes data/sandbox_pairs.jsonl (1,620 rows)
+git clone https://github.com/sunkenship2025/adnn-irreversibility.git
+cd adnn-irreversibility
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.in
+pip freeze > requirements.txt            # exact versions for the report: commit this file
+huggingface-cli login                    # or `hf auth login`; the token must have Llama 3.1 access
+java -version                            # ScienceWorld needs Java 1.8 or newer
+nvidia-smi                               # about 50 GB of GPU memory should be free
+mkdir -p logs
 ```
 
-```python
-from sandbox import Sandbox, label_action
+Disk: about 16 GB per model in the Hugging Face cache (set `HF_HOME` if the home quota is small), and about 3 GB of hidden states per model under `results/hidden/` (not committed).
 
-box = Sandbox(row["state"])                           # any row from data/sandbox_pairs.jsonl
-print(box.render("config"))                           # state text the model sees
-obs, ok = box.step({"tool": "delete_file", "args": {"path": "/docs/q3_report.txt"}})
-result = label_action(row["state"], row["action"])    # BFS label at horizons 1 to 3
+### Step 1: tests (CPU, under a minute)
+
+```bash
+python -m pytest -q
 ```
+
+Everything must pass. If anything fails, stop and send the output to Pranav before running anything else.
+
+### Step 2: data (CPU)
+
+```bash
+python -m sandbox.scenarios --worlds 60 --seed 0          # data/sandbox_pairs.jsonl, 1,620 rows; reproduces the committed file
+```
+
+ScienceWorld: first the smoke test, then the full run. Exact flags and expected times are in [docs/sciworld_spec.md](docs/sciworld_spec.md).
+
+```bash
+python -m sciworld.generate --limit 20 --out data/sciworld_smoke.jsonl   # check it runs and the labels look sensible
+python -m sciworld.generate --out data/sciworld_pairs.jsonl              # about 800 rows
+```
+
+Then the splits, which every later step uses:
+
+```bash
+python -m probes.splits --rows data/sandbox_pairs.jsonl data/sciworld_pairs.jsonl     # data/splits/seed{0,1,2}.json
+python -m experiments.agent_runs --model dry-run --limit 3                           # agent plumbing, no model, seconds
+```
+
+From here on, `ROWS="data/sandbox_pairs.jsonl data/sciworld_pairs.jsonl"`.
+
+### Step 3: Qwen2.5-7B (GPU)
+
+Run each step on a few rows first, then for real.
+
+| Exp | Command | Writes | Rough time |
+| --- | --- | --- | --- |
+| E1 smoke | `python -m models.extract --model qwen7b --rows $ROWS --limit 20 --out results/hidden/smoke` | 20 rows | 2 min |
+| E1 | `python -m models.extract --model qwen7b --rows $ROWS` | `results/hidden/qwen7b/` | 10-20 min |
+| E2 | `python -m probes.train --model qwen7b --rows $ROWS` | `results/probes/qwen7b/` | 30-90 min, CPU |
+| E3 smoke | `python -m experiments.stated --model qwen7b --rows $ROWS --limit 20 --out results/stated/smoke` | 20 rows + 120 pair questions | 5 min |
+| E3 | `python -m experiments.stated --model qwen7b --rows $ROWS` | `results/stated/qwen7b/` | 1-2 h |
+| E4 smoke | `python -m experiments.agent_runs --model qwen7b --limit 3 --out results/agent/smoke` | 6 episodes | 5 min |
+| E4 | `python -m experiments.agent_runs --model qwen7b` | `results/agent/qwen7b/neutral/` | 1-2 h |
+| E5 | `python -m experiments.agent_runs --model qwen7b --careful` | `results/agent/qwen7b/careful/` | 1-2 h |
+
+Check after E2: `results/probes/qwen7b/best_layer.json` names a layer, and `results.csv` has rows for every layer. Check after E4: the summary printed at the end shows the shortcut rate. If the shortcut rate is under 20% in both versions, tell the team before E5 (see Risks in the plan).
+
+### Step 4: Llama-3.1-8B (GPU)
+
+The same commands with `--model llama8b`. Llama is gated: if loading fails with a 401 or 403 error, the licence has not been approved for the logged-in account yet.
+
+### Step 5: horizon ablation (CPU)
+
+```bash
+for m in qwen7b llama8b; do
+  python -m probes.train --model $m --rows $ROWS --label-field label_h1 --positions last
+  python -m probes.train --model $m --rows $ROWS --label-field label_h2 --positions last
+done
+```
+
+### Step 6: steering, RQ4 (GPU, bonus; only after the Nov 5 gate)
+
+```bash
+python -m experiments.steering --model qwen7b --mode decision                    # E6, 20-40 min
+python -m experiments.steering --model qwen7b --mode rollouts --alphas -2 0 2    # E7, 5-8 h
+```
+
+Run E7 on a few pairs first (`--limit 3`). If replies stop parsing at alpha = 2, use smaller alphas (for example `-1 0 1`) and note it in the run log.
+
+### Step 7: figures and tables (CPU)
+
+```bash
+python -m analysis.report --models qwen7b llama8b --rows $ROWS
+```
+
+This writes `results/figures/` and `results/tables/`, and can be run at any point: missing parts are skipped. Commit `results/` (except `results/hidden/`, which git ignores).
+
+### If something breaks
+
+| Symptom | Likely cause and fix |
+| --- | --- |
+| CUDA out of memory | Another job is on the GPU (`nvidia-smi`). Never load two models at once. For the 14B model use `--limit` and short runs |
+| `the chat template changed the action text` (E1) | The tokenizer's chat template rewrote the action. Send the row id to Pranav |
+| Steering error in the forward hook | This transformers version returns something new from a decoder layer. Send the traceback |
+| Many parse failures in E4 | Look at a few `reply` fields in the episode files; they are counted and reported, never dropped |
+| A step was interrupted | Run the same command again; E1, E3, E4, E5 and E7 resume |
 
 ## Dataset format
 
@@ -44,18 +135,14 @@ One JSON object per line. The 7 fields required by the brief come first:
 
 | Field | Meaning |
 | --- | --- |
-| `id`, `environment`, `state_text`, `action_text`, `label`, `horizon`, `source` | Required. `label` uses horizon 3; `source` is `minimal_pair` or `random` |
-| `task_text` | The user instruction the action answers; identical across a minimal pair |
-| `scenario_id` | World id. Split train/test by this field, never by row |
-| `pair_id`, `mechanism`, `variant` | Minimal-pair group, the action type, and which variant this row is |
-| `cue_style` | `config`, `structural` or `narrative`: how the settings are written |
-| `label_h1`, `label_h2`, `label_h3` | Labels at each horizon (for the horizon ablation) |
+| `id`, `environment`, `state_text`, `action_text`, `label`, `horizon`, `source` | Required. `label` uses horizon 3 |
+| `task_text` | The instruction the action answers; identical across a minimal pair |
+| `scenario_id` | World or ScienceWorld variation. Splits use this field, never single rows |
+| `pair_id`, `mechanism`, `variant` | Minimal-pair group, the action verb, which variant |
+| `cue_style` | `config`, `structural` or `narrative` (sandbox only) |
+| `label_h1`, `label_h2`, `label_h3` | Labels at each horizon |
 | `restore_sequence` | Shortest undo the labeller found |
-| `action`, `state` | Structured action and full state, to re-run or re-render |
-
-## Environment
-
-Pin exact versions on the GPU machine once everything runs: `pip install -r requirements.in`, then `pip freeze > requirements.txt` and commit it. Fixed settings for every experiment: greedy decoding, seeds fixed, every prompt and output saved under `results/`.
+| `action`, `state` / `replay` | Enough to re-run the row: the sandbox state, or the ScienceWorld task, variation and action prefix |
 
 ## Safety
 
