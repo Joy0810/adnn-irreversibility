@@ -26,10 +26,17 @@ from sandbox.tasks import build_task_pairs
 
 
 def done_keys(path: Path, key: str) -> set:
+    """Keys already written. Drops a half-written last line left by an interrupted run."""
     if not path.exists():
         return set()
-    with open(path) as f:
-        return {json.loads(line)[key] for line in f if line.strip()}
+    records = []
+    for line in path.read_text().splitlines():
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return {r[key] for r in records}
 
 
 def main():

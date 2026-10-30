@@ -41,9 +41,18 @@ from sklearn.metrics import balanced_accuracy_score, f1_score, roc_auc_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+from sandbox.tools import TOOLS
+
 LABEL_SETS = {"binary": ["reversible", "irreversible"], "three": ["reversible", "partial", "irreversible"]}
 CS = (0.001, 0.01, 0.1, 1.0)
 POSITIONS = ("last", "mean")
+# Actions that change nothing are trivially reversible and are kept out of the probe data.
+READ_ONLY = {name for name, tool in TOOLS.items() if tool.read_only} | {
+    "look around", "look at", "look in", "inventory", "task", "read", "examine", "focus on", "wait", "wait1"}
+
+
+def usable(row: dict, classes) -> bool:
+    return row["label"] in classes and row["mechanism"] not in READ_ONLY
 
 
 def probe(C: float):
@@ -150,8 +159,8 @@ def text_baselines(rows, y, split, k) -> list[dict]:
 
 
 def task_data(all_rows, part, classes):
-    """Rows with a label in `classes`, their array indices, labels and split indices."""
-    keep = np.array([i for i, r in enumerate(all_rows) if r["label"] in classes])
+    """Usable rows with a label in `classes`: their array indices, rows, labels and split indices."""
+    keep = np.array([i for i, r in enumerate(all_rows) if usable(r, classes)])
     rows = [all_rows[i] for i in keep]
     y = np.array([classes.index(r["label"]) for r in rows])
     split = {name: np.array([j for j, r in enumerate(rows) if part.get(r["id"]) == name], dtype=int)
@@ -167,10 +176,14 @@ def read_split(splits_dir: Path, seed: int) -> dict:
 def choose_best_layer(table: pd.DataFrame) -> dict:
     sel = table[(table.seed == table.seed.min()) & (table.position == "last") & (table.labels == "binary")
                 & (table.method == "probe") & (table.train_env == "all") & (table.subset == "all")]
+    # Layer 0 (embeddings) cannot be steered, and the last entry comes after the final norm,
+    # so it is not the quantity the steering hook changes.
+    sel = sel[(sel.layer >= 1) & (sel.layer < sel.layer.max())]
     top = sel.sort_values(["val_balanced_acc", "layer"], ascending=[False, True]).iloc[0]
     return {"layer": int(top.layer), "val_balanced_acc": float(top.val_balanced_acc), "C": float(top.C),
             "seed": int(table.seed.min()),
-            "rule": "first seed, last token, binary labels, highest validation balanced accuracy, ties to the earlier layer"}
+            "rule": "first seed, last token, binary labels, layers 1 to n-1, highest validation "
+                    "balanced accuracy, ties to the earlier layer"}
 
 
 def save_predictions_and_direction(all_rows, hidden, splits_dir, seeds, layer, out):
@@ -195,8 +208,9 @@ def save_predictions_and_direction(all_rows, hidden, splits_dir, seeds, layer, o
 
     # The steering direction uses the training split of the first seed only.
     part = read_split(splits_dir, seeds[0])
-    rev = [i for i, r in enumerate(all_rows) if part.get(r["id"]) == "train" and r["label"] == "reversible"]
-    irr = [i for i, r in enumerate(all_rows) if part.get(r["id"]) == "train" and r["label"] == "irreversible"]
+    train = [i for i, r in enumerate(all_rows) if part.get(r["id"]) == "train" and usable(r, LABEL_SETS["binary"])]
+    rev = [i for i in train if all_rows[i]["label"] == "reversible"]
+    irr = [i for i in train if all_rows[i]["label"] == "irreversible"]
     direction = X[irr].mean(axis=0) - X[rev].mean(axis=0)
     np.save(out / "direction.npy", direction)
     (out / "direction.json").write_text(json.dumps({
@@ -227,6 +241,9 @@ def main():
 
     by_id = {r["id"]: {**r, "label": r[args.label_field]} for r in load_rows(args.rows)}
     all_rows = [by_id[i] for i in json.loads((hidden / "ids.json").read_text())]  # array order
+    done = json.loads((hidden / "progress.json").read_text())["done"]
+    if done != len(all_rows):
+        raise SystemExit(f"E1 is incomplete ({done} of {len(all_rows)} rows): rerun models.extract first")
     n_layers = json.loads((hidden / "meta.json").read_text())["n_layers"]
     envs = sorted({r["environment"] for r in all_rows})
     transfer_envs = envs if len(envs) > 1 else []

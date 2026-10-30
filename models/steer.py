@@ -36,10 +36,11 @@ def steer(model, layer: int, vector, alpha: float):
     delta = torch.as_tensor(np.asarray(vector), dtype=torch.float32, device=model.device) * alpha
 
     def hook(module, inputs, output):
-        # Depending on the transformers version a block returns a tuple or a tensor.
+        # Depending on the transformers version a block returns a tuple or a tensor;
+        # with several GPUs the block may not sit on the first one.
         if isinstance(output, tuple):
-            return (output[0] + delta.to(output[0].dtype),) + tuple(output[1:])
-        return output + delta.to(output.dtype)
+            return (output[0] + delta.to(output[0].device, output[0].dtype),) + tuple(output[1:])
+        return output + delta.to(output.device, output.dtype)
 
     handle = block.register_forward_hook(hook)
     try:

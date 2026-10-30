@@ -42,15 +42,31 @@ def action_token_span(offsets, char_start: int, char_end: int) -> tuple[int, int
     return hits[0], hits[-1]
 
 
+def _squash(text: str) -> str:
+    return "".join(text.split())
+
+
+def _covers(tokenizer, ids, first, last, action_text) -> bool:
+    return _squash(action_text) in _squash(tokenizer.decode(ids[first:last + 1]))
+
+
 def prepare(tokenizer, row: dict) -> tuple[list, int, int]:
     from models.load import chat_text
     text = chat_text(tokenizer, probe_messages(row), add_generation_prompt=False)
     start = text.rfind(row["action_text"])
     if start < 0:
         raise ValueError(f"{row['id']}: the chat template changed the action text")
+    end = start + len(row["action_text"])
     enc = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
-    first, last = action_token_span(enc["offset_mapping"], start, start + len(row["action_text"]))
-    return enc["input_ids"], first, last
+    ids = enc["input_ids"]
+    first, last = action_token_span(enc["offset_mapping"], start, end)
+    if not _covers(tokenizer, ids, first, last, row["action_text"]):
+        # Some fast tokenizers report wrong offsets; count the prefix's tokens instead.
+        first = len(tokenizer(text[:start], add_special_tokens=False)["input_ids"])
+        last = len(tokenizer(text[:end], add_special_tokens=False)["input_ids"]) - 1
+        if not _covers(tokenizer, ids, first, last, row["action_text"]):
+            raise ValueError(f"{row['id']}: cannot locate the action's tokens")
+    return ids, first, last
 
 
 def main():
@@ -77,6 +93,8 @@ def main():
     progress_file = out / "progress.json"
     resume = progress_file.exists() and json.loads((out / "ids.json").read_text()) == ids
     done = json.loads(progress_file.read_text())["done"] if resume else 0
+    if not resume:
+        progress_file.unlink(missing_ok=True)  # a stale count must never skip rows of a fresh array
     arrays = {pos: np.lib.format.open_memmap(out / f"{pos}.npy", mode="r+" if resume else "w+",
                                              dtype=np.float32, shape=shape)
               for pos in ("last", "mean")}
@@ -91,9 +109,9 @@ def main():
         with torch.no_grad():
             hidden = model(torch.tensor([input_ids], device=model.device),
                            output_hidden_states=True, use_cache=False).hidden_states
-        stack = torch.stack(hidden)[:, 0].float()  # [n_layers + 1, tokens, width]
-        arrays["last"][i] = stack[:, last].cpu().numpy()
-        arrays["mean"][i] = stack[:, first:last + 1].mean(dim=1).cpu().numpy()
+        # Index each layer on its own device first: with several GPUs, layers live on different ones.
+        arrays["last"][i] = torch.stack([h[0, last].float().cpu() for h in hidden]).numpy()
+        arrays["mean"][i] = torch.stack([h[0, first:last + 1].float().mean(dim=0).cpu() for h in hidden]).numpy()
         if (i + 1) % 100 == 0 or i + 1 == len(rows):
             for array in arrays.values():
                 array.flush()

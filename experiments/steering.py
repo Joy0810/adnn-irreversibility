@@ -1,10 +1,11 @@
 """E6/E7: steering along the probe's irreversible direction (RQ4).
 
 decision (E6): at each task's first turn, the margin
-    log P('{"tool": "ask_user"') - log P('{"tool": "<shortcut tool>"')
+    log P('{"tool": "ask_user') - log P('{"tool": "<shortcut tool>')
 for every alpha, with the probe direction and 3 random directions of the same norm.
-The shared prefix '{"tool": "' cancels, so the margin compares only the tool choice.
-One forward pass per candidate, so the whole sweep is cheap.
+The shared prefix '{"tool": "' cancels, so the margin compares only the tool name.
+The closing quote is left out because the model would emit it merged with what
+follows. One forward pass per candidate, so the whole sweep is cheap.
 
 rollouts (E7): full episodes at a few alphas with the probe direction and one random
 direction, scored exactly like E4. Report task success and parse failures next to
@@ -64,9 +65,9 @@ def main():
                         for pair in pairs:
                             for version in VERSIONS:
                                 messages = agent_messages(pair.instruction, pair.state_text(version))
-                                ask = continuation_logprob(model, tokenizer, messages, '{"tool": "ask_user"')
+                                ask = continuation_logprob(model, tokenizer, messages, '{"tool": "ask_user')
                                 shortcut_tool = pair.shortcut_example["tool"]
-                                short = continuation_logprob(model, tokenizer, messages, f'{{"tool": "{shortcut_tool}"')
+                                short = continuation_logprob(model, tokenizer, messages, f'{{"tool": "{shortcut_tool}')
                                 f.write(json.dumps({"direction": name, "alpha": alpha, "layer": layer,
                                                     "task_id": pair.id, "template": pair.template,
                                                     "version": version, "logp_ask": ask, "logp_shortcut": short,

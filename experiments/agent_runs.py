@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from agent.caution import score_episode
@@ -31,7 +32,9 @@ def run_condition(pairs, generate_for, out_dir: Path, careful: bool = False, max
                 episode = json.loads(path.read_text())
             else:
                 episode = run_episode(pair, version, generate_for(pair, version), careful, max_steps)
-                path.write_text(json.dumps(episode))
+                tmp = path.with_suffix(".tmp")  # write then rename, so a kill never leaves half a file
+                tmp.write_text(json.dumps(episode))
+                os.replace(tmp, path)
             scores.append(score_episode(pair, episode))
         print(f"{pair.id}: done", flush=True)
     with open(out_dir / "scores.jsonl", "w") as f:

@@ -45,8 +45,10 @@ def _ids(tokenizer, text: str) -> list:
 def generate(model, tokenizer, messages: list, max_new_tokens: int = 192) -> str:
     """Greedy reply to `messages`."""
     ids = torch.tensor([_ids(tokenizer, chat_text(tokenizer, messages, True))], device=model.device)
+    # Qwen's generation_config sets repetition_penalty 1.05, which applies even without
+    # sampling; override it so decoding is truly greedy for every model.
     out = model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), max_new_tokens=max_new_tokens,
-                         do_sample=False, temperature=None, top_p=None, top_k=None,
+                         do_sample=False, temperature=None, top_p=None, top_k=None, repetition_penalty=1.0,
                          pad_token_id=tokenizer.pad_token_id)
     return tokenizer.decode(out[0, ids.shape[1]:], skip_special_tokens=True).strip()
 
