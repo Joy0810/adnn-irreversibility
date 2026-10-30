@@ -1,0 +1,14 @@
+# Top-level dependencies. On the GPU machine: pip install -r requirements.in,
+# then pip freeze > requirements.txt to pin exact versions for the report.
+# The sandbox itself needs only the standard library.
+pytest
+numpy
+scipy
+pandas
+scikit-learn
+statsmodels
+matplotlib
+torch
+transformers
+accelerate
+scienceworld

@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.ipynb_checkpoints/
+.DS_Store
+
+# Hidden states are large and reproducible from code: keep them out of git.
+data/hidden_states/
+*.npy
+*.npz
+*.pt
+*.safetensors
+
+# Model caches
+.cache/
+hf_cache/
