@@ -27,7 +27,12 @@ def load(key: str, device_map: str = "auto"):
     tokenizer = AutoTokenizer.from_pretrained(name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(name, device_map=device_map, **{_dtype_kwarg(): torch.bfloat16})
+    # T4s (Kaggle) have no bfloat16, so fall back to float16 there; float32 on CPU (smoke tests only).
+    if not torch.cuda.is_available():
+        dtype = torch.float32
+    else:
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    model = AutoModelForCausalLM.from_pretrained(name, device_map=device_map, **{_dtype_kwarg(): dtype})
     model.eval()
     return model, tokenizer
 

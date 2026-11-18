@@ -1,18 +1,21 @@
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
 .venv/
 venv/
+.pytest_cache/
+
+# Credentials
+.env
+.env.*
+!.env.example
+*token*
+kaggle.json
+
+# Generated experiments
+results/
+logs/
+
+# Notebook and system files
 .ipynb_checkpoints/
 .DS_Store
-
-# Hidden states are large (about 3 GB per model) and reproducible: keep them out of git.
-results/hidden/
-*.npy
-*.npz
-*.pt
-*.safetensors
-
-# Model caches
-.cache/
-hf_cache/

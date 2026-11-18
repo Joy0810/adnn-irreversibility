@@ -123,6 +123,26 @@ python -m analysis.report --models qwen7b llama8b --rows $ROWS
 
 This writes `results/figures/` and `results/tables/`, and can be run at any point: missing parts are skipped. Commit `results/` (except `results/hidden/`, which git ignores).
 
+### Kaggle (2x T4) instead of the lab GPU
+
+Data (Step 2) is made on a laptop first; Kaggle only runs the models. T4s have no bfloat16, so `models/load.py` uses float16 there.
+
+1. Zip this folder (with `data/`) and upload it as a private Kaggle dataset, e.g. `adnn-repo`.
+2. New notebook: Accelerator `GPU T4 x2`, Internet on, add the dataset, add a secret `HF_TOKEN` (for Llama: an HF token whose account has Llama 3.1 approved).
+3. One cell, then "Save Version" → "Save & Run All" so it runs in the background (12 h limit) and keeps `/kaggle/working`:
+
+```python
+import os
+from kaggle_secrets import UserSecretsClient
+os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
+!cp -r /kaggle/input/adnn-repo/adnn-irreversibility /kaggle/working/
+%cd /kaggle/working/adnn-irreversibility
+!pip install -q statsmodels
+!bash kaggle_run.sh qwen7b main
+```
+
+Run `main` and `stated` as two separate notebook versions per model. Download `results/` from the notebook's Output tab into this folder, then run Step 7 on the laptop.
+
 ### If something breaks
 
 | Symptom | Likely cause and fix |
